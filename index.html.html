@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Library Manager — Single File</title>
+  <style>
+    :root{
+      --primary:#00d1b2;
+      --bg:#f6fbfa;
+      --card:#ffffff;
+      --muted:#6b7280;
+      --radius:12px;
+      font-family: "Segoe UI", Roboto, system-ui, -apple-system, "Helvetica Neue", Arial;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:#072029}
+    .app{display:flex;height:100vh;gap:20px;padding:20px}
+    .sidebar{width:260px;background:linear-gradient(180deg,var(--card),#f8fffd);border-radius:var(--radius);box-shadow:0 6px 18px rgba(2,6,23,0.06);padding:18px;display:flex;flex-direction:column}
+    .brand{display:flex;gap:12px;align-items:center}
+    .logo{width:48px;height:48px;border-radius:10px;background:var(--primary);display:grid;place-items:center;color:white;font-weight:800}
+    .title{font-weight:700;font-size:18px}
+    .subtitle{font-size:12px;color:var(--muted)}
+    .nav{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+    .nav button{background:transparent;border:none;padding:10px 12px;text-align:left;border-radius:10px;cursor:pointer;font-weight:700;color:#033;opacity:0.85}
+    .nav button.active{background:rgba(0,209,178,0.12);color:var(--primary)}
+    .meta{margin-top:auto;font-size:13px;color:var(--muted)}
+    .main{flex:1;display:flex;flex-direction:column;gap:16px}
+    .topbar{display:flex;justify-content:space-between;align-items:center}
+    .card{background:var(--card);padding:16px;border-radius:12px;box-shadow:0 6px 18px rgba(2,6,23,0.06)}
+    input,select,textarea{padding:10px;border-radius:8px;border:1px solid #e6f3ef}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px;border-bottom:1px solid #eef6f4;text-align:left}
+    th{font-size:13px;color:var(--muted)}
+    .actions{display:flex;gap:8px}
+    .btn{padding:8px 12px;border-radius:10px;border:none;cursor:pointer;font-weight:700}
+    .btn.primary{background:var(--primary);color:white}
+    .btn.ghost{background:transparent;border:1px solid #e6f3ef}
+    .small{font-size:13px;color:var(--muted)}
+    .modal-back{position:fixed;inset:0;background:rgba(2,6,23,0.45);display:none;align-items:center;justify-content:center;padding:20px}
+    .modal{background:white;padding:18px;border-radius:12px;min-width:320px;max-width:900px;box-shadow:0 12px 30px rgba(2,6,23,0.2)}
+    .right{display:flex;gap:8px;align-items:center}
+    @media (max-width:900px){.app{flex-direction:column;padding:12px}.sidebar{width:100%;flex-direction:row;align-items:center;gap:12px;padding:12px}.nav{flex-direction:row;overflow:auto}.meta{display:none}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar card">
+      <div class="brand">
+        <div class="logo">LM</div>
+        <div>
+          <div class="title">Library Manager</div>
+          <div class="subtitle">LocalStorage — Một file</div>
+        </div>
+      </div>
+
+      <nav class="nav" id="menu">
+        <button data-view="dashboard" class="active">Dashboard</button>
+        <button data-view="books" class="hidden">Quản lý sách</button>
+        <button data-view="borrow" class="hidden">Mượn / Trả</button>
+        <button data-view="users" class="hidden">Người dùng</button>
+        <button data-view="history" class="hidden">Lịch sử</button>
+        <button data-view="profile" class="hidden">Tài khoản</button>
+        <button data-view="auth">Đăng nhập / Đăng ký</button>
+      </nav>
+
+      <div class="meta small" id="meta">
+        <div id="currentUserText">Chưa đăng nhập</div>
+        <div style="margin-top:8px">Màu chủ đạo: <span style="color:var(--primary)">#00d1b2</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div style="display:flex;gap:12px;align-items:center">
+          <input id="globalSearch" placeholder="Tìm sách, user, isbn..." style="padding:10px;border-radius:10px;border:1px solid #e6f3ef;min-width:360px">
+          <button class="btn ghost" id="btnNewBook">+ Thêm sách</button>
+        </div>
+        <div class="right">
+          <div id="welcome">Khách</div>
+          <button class="btn" id="btnLogout">Đăng xuất</button>
+        </div>
+      </div>
+
+      <div id="viewArea"></div>
+    </main>
+  </div>
+
+  <!-- modal -->
+  <div class="modal-back" id="modalBack"><div class="modal card" id="modalContent"></div></div>
+
+<script>
+/* ---------- Storage keys & init ---------- */
+const LS = {users:'lib_users_v1', books:'lib_books_v1', history:'lib_history_v1', current:'lib_current_v1'};
+
+function load(key){ try { return JSON.parse(localStorage.getItem(key))||null } catch(e){return null} }
+function save(key,val){ localStorage.setItem(key,JSON.stringify(val)) }
+
+function ensureInit(){
+  if(!load(LS.users)){
+    const users = [
+      {id:1,name:'Admin',email:'admin@lib.local',password:'admin',role:'admin',borrowed:[]},
+      {id:2,name:'Nguyen Van A',email:'a@lib.local',password:'123456',role:'user',borrowed:[]}
+    ];
+    save(LS.users,users);
+  }
+  if(!load(LS.books)){
+    const books = [
+      {id:1,title:'Lập trình JavaScript',author:'Nguyễn Dev',isbn:'JS001',total:4,available:4},
+      {id:2,title:'Hành trình thời gian',author:'Stephen Hawking',isbn:'BK002',total:2,available:1}
+    ];
+    save(LS.books,books);
+  }
+  if(!load(LS.history)) save(LS.history,[]);
+}
+ensureInit();
+
+/* ---------- App State ---------- */
+const App = {
+  users: load(LS.users) || [],
+  books: load(LS.books) || [],
+  history: load(LS.history) || [],
+  current: load(LS.current) || null,
+  view: 'dashboard'
+};
+
+function persist(){
+  save(LS.users,App.users);
+  save(LS.books,App.books);
+  save(LS.history,App.history);
+  save(LS.current,App.current);
+}
+
+/* ---------- Utilities ---------- */
+function uid(arr){ return (arr.reduce((m,x)=>Math.max(m,x.id),0)||0)+1 }
+function fmtDate(d){ return new Date(d).toLocaleString() }
+function openModal(html){ document.getElementById('modalContent').innerHTML = html; document.getElementById('modalBack').style.display='flex' }
+function closeModal(){ document.getElementById('modalBack').style.display='none'; document.getElementById('modalContent').innerHTML = '' }
+document.getElementById('modalBack').addEventListener('click', e=>{ if(e.target===document.getElementById('modalBack')) closeModal() })
+
+/* ---------- Navigation & Render ---------- */
+const viewArea = document.getElementById('viewArea');
+const menuButtons = document.querySelectorAll('#menu button');
+
+menuButtons.forEach(b=>b.addEventListener('click', ()=> setView(b.dataset.view)));
+
+document.getElementById('btnNewBook').addEventListener('click', ()=> openAddBook());
+document.getElementById('btnLogout').addEventListener('click', ()=> {
+  App.current = null; persist(); render(); alert('Đã đăng xuất');
+});
+
+document.getElementById('globalSearch').addEventListener('input', e=>{
+  const q = e.target.value.trim().toLowerCase();
+  if(!q) return render();
+  const books = App.books.filter(b => (b.title+' '+b.author+' '+b.isbn).toLowerCase().includes(q));
+  const users = App.users.filter(u => (u.name+' '+u.email).toLowerCase().includes(q));
+  viewArea.innerHTML = `<div class="card"><h3>Kết quả tìm kiếm: "${q}"</h3>
+    <div style="margin-top:8px"><h4>Sách</h4>${books.length? '<table><thead><tr><th>Tiêu đề</th><th>Tác giả</th><th>ISBN</th><th>Available</th></tr></thead><tbody>'+books.map(b=>`<tr><td>${b.title}</td><td>${b.author}</td><td>${b.isbn}</td><td>${b.available}/${b.total}</td></tr>`).join('')+'</tbody></table>' : '<div class="small">Không tìm thấy sách</div>'}</div>
+    <div style="margin-top:12px"><h4>Người dùng</h4>${users.length? '<table><thead><tr><th>Tên</th><th>Email</th></tr></thead><tbody>'+users.map(u=>`<tr><td>${u.name}</td><td>${u.email}</td></tr>`).join('')+'</tbody></table>' : '<div class="small">Không tìm thấy người dùng</div>'}</div>
+  </div>`;
+});
+
+function setView(v){
+  App.view = v;
+  menuButtons.forEach(b=> b.classList.toggle('active', b.dataset.view === v));
+  render();
+}
+
+/* ---------- Render Views ---------- */
+function render(){
+  // reload
+  App.users = load(LS.users) || App.users;
+  App.books = load(LS.books) || App.books;
+  App.history = load(LS.history) || App.history;
+  App.current = load(LS.current) || App.current;
+
+  // update sidebar links visibility based on login
+  const logged = !!App.current;
+  document.querySelectorAll('#menu button').forEach(b=>{
+    const view = b.dataset.view;
+    if(view === 'dashboard' || view === 'auth') return; // keep
+    b.classList.toggle('hidden', !logged);
+  });
+  // show/hide profile & auth
+  document.querySelector('#menu button[data-view="profile"]').classList.toggle('hidden', !logged);
+  document.querySelector('#menu button[data-view="auth"]').textContent = logged? 'Đổi tài khoản' : 'Đăng nhập / Đăng ký';
+
+  document.getElementById('currentUserText').textContent = App.current? (App.current.name + ' — ' + App.current.email) : 'Chưa đăng nhập';
+  document.getElementById('welcome').textContent = App.current? 'Xin chào, ' + App.current.name : 'Khách';
+
+  switch(App.view){
+    case 'dashboard': renderDashboard(); break;
+    case 'books': renderBooks(); break;
+    case 'borrow': renderBorrow(); break;
+    case 'users': renderUsers(); break;
+    case 'history': renderHistory(); break;
+    case 'profile': renderProfile(); break;
+    case 'auth': renderAuth(); break;
+    default: renderDashboard(); break;
+  }
+}
+
+function renderDashboard(){
+  const totalBooks = App.books.reduce((s,b)=>s+b.total,0);
+  const available = App.books.reduce((s,b)=>s+b.available,0);
+  const totalUsers = App.users.length;
+  const totalBorrowed = App.history.filter(h=>h.type==='borrow').length;
+
+  viewArea.innerHTML = `
+    <div class="grid">
+      <div class="card">
+        <div class="small">Tổng sách</div>
+        <div style="font-size:26px;font-weight:800">${totalBooks}</div>
+        <div class="small">Sẵn có: ${available}</div>
+      </div>
+      <div class="card">
+        <div class="small">Người dùng</div>
+        <div style="font-size:26px;font-weight:800">${totalUsers}</div>
+        <div class="small">Tài khoản</div>
+      </div>
+      <div class="card">
+        <div class="small">Lượt mượn</div>
+        <div style="font-size:26px;font-weight:800">${totalBorrowed}</div>
+        <div class="small">Tổng lượt mượn</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3>Danh sách sách mới</h3>
+      <div id="recentBooks"></div>
+    </div>
+  `;
+
+  const rb = App.books.slice(-5).reverse();
+  document.getElementById('recentBooks').innerHTML = rb.length ? '<table><thead><tr><th>Tiêu đề</th><th>Tác giả</th><th>ISBN</th><th>Available</th></tr></thead><tbody>' + rb.map(b=>`<tr><td>${b.title}</td><td>${b.author}</td><td>${b.isbn}</td><td>${b.available}/${b.total}</td></tr>`).join('') + '</tbody></table>' : '<div class="small">Chưa có sách</div>';
+}
+
+function renderBooks(){
+  viewArea.innerHTML = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h3>Quản lý sách</h3>
+        <div class="small">Tổng: ${App.books.length} sách</div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+        <input id="filterBook" placeholder="Tìm theo tiêu đề, tác giả, isbn" style="padding:8px;border-radius:8px;border:1px solid #e6f3ef;flex:1">
+        <button class="btn ghost" id="btnAddNew">Thêm mới</button>
+      </div>
+      <div style="margin-top:12px;overflow:auto">
+        <table id="booksTable"><thead><tr><th>#</th><th>Tiêu đề</th><th>Tác giả</th><th>ISBN</th><th>Số lượng</th><th>Available</th><th>Hành động</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  `;
+  const tbody = document.querySelector('#booksTable tbody');
+  function refresh(filter=''){
+    const rows = App.books.filter(b=> (b.title+' '+b.author+' '+b.isbn).toLowerCase().includes(filter.toLowerCase()));
+    tbody.innerHTML = rows.map((b,i)=>`<tr>
+      <td>${i+1}</td>
+      <td>${b.title}</td>
+      <td>${b.author}</td>
+      <td>${b.isbn}</td>
+      <td>${b.total}</td>
+      <td>${b.available}</td>
+      <td class="actions">
+        <button class="btn ghost" data-id="${b.id}" data-act="edit">Sửa</button>
+        <button class="btn" data-id="${b.id}" data-act="del">Xóa</button>
+      </td>
+    </tr>`).join('');
+    tbody.querySelectorAll('button').forEach(btn=> btn.addEventListener('click', e=>{
+      const id = +btn.dataset.id; const act = btn.dataset.act;
+      if(act==='edit') openEditBook(id);
+      if(act==='del') {
+        const book = App.books.find(x=>x.id===id);
+        if(book.available !== book.total){
+          if(!confirm('Sách này đang có bản được mượn. Bạn có chắc muốn xóa?')) return;
+        } else {
+          if(!confirm('Xóa sách?')) return;
+        }
+        App.books = App.books.filter(x=>x.id!==id); persist(); renderBooks();
+      }
+    }));
+  }
+  document.getElementById('filterBook').addEventListener('input', e=> refresh(e.target.value));
+  document.getElementById('btnAddNew').addEventListener('click', openAddBook);
+  refresh('');
+}
+
+function renderBorrow(){
+  viewArea.innerHTML = `
+    <div class="card">
+      <h3>Mượn / Trả sách</h3>
+      <div style="margin-top:12px;display:flex;gap:12px;align-items:center">
+        <select id="selectUser"></select>
+        <select id="selectBook"></select>
+        <button class="btn primary" id="btnBorrow">Mượn</button>
+        <button class="btn" id="btnReturn">Trả</button>
+      </div>
+      <div style="margin-top:12px">
+        <h4>Danh sách giao dịch (mới nhất trên cùng)</h4>
+        <table><thead><tr><th>#</th><th>Người</th><th>Sách</th><th>Loại</th><th>Ngày</th></tr></thead><tbody id="brList"></tbody></table>
+      </div>
+    </div>
+  `;
+  const su = document.getElementById('selectUser'), sb = document.getElementById('selectBook');
+  su.innerHTML = App.users.map(u=>`<option value="${u.id}">${u.name} (${u.email})</option>`).join('');
+  sb.innerHTML = App.books.map(b=>`<option value="${b.id}">${b.title} — ${b.available}/${b.total}</option>`).join('');
+  document.getElementById('btnBorrow').addEventListener('click', ()=> {
+    const uid = +su.value; const bid = +sb.value; borrowBook(uid,bid);
+  });
+  document.getElementById('btnReturn').addEventListener('click', ()=> {
+    const uid = +su.value; const bid = +sb.value; returnBook(uid,bid);
+  });
+  refreshBR();
+  function refreshBR(){
+    const rows = App.history.slice().reverse();
+    document.getElementById('brList').innerHTML = rows.map((h,i)=>`<tr><td>${i+1}</td><td>${h.userName}</td><td>${h.bookTitle}</td><td>${h.type}</td><td>${fmtDate(h.date)}</td></tr>`).join('');
+  }
+}
+
+function renderUsers(){
+  viewArea.innerHTML = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h3>Người dùng</h3>
+        <button class="btn primary" id="btnNewUser">Tạo user</button>
+      </div>
+      <div style="margin-top:12px;overflow:auto">
+        <table id="usersTable"><thead><tr><th>#</th><th>Tên</th><th>Email</th><th>Role</th><th>Borrowed</th><th>Actions</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  `;
+  const tbody = document.querySelector('#usersTable tbody');
+  function refresh(){
+    tbody.innerHTML = App.users.map((u,i)=>`<tr>
+      <td>${i+1}</td>
+      <td>${u.name}</td>
+      <td>${u.email}</td>
+      <td>${u.role||'user'}</td>
+      <td>${u.borrowed.map(x=> {
+        const bk = App.books.find(b=>b.id===x.bookId);
+        return bk? bk.title : '---';
+      }).join('; ') || '-'}</td>
+      <td class="actions">
+        <button class="btn ghost" data-id="${u.id}" data-act="edit">Sửa</button>
+        <button class="btn" data-id="${u.id}" data-act="del">Xóa</button>
+      </td>
+    </tr>`).join('');
+    tbody.querySelectorAll('button').forEach(b=> b.addEventListener('click', ()=>{
+      const id = +b.dataset.id; const act = b.dataset.act;
+      if(act==='edit') openEditUser(id);
+      if(act==='del'){ if(!confirm('Xóa user này?')) return; App.users = App.users.filter(x=>x.id!==id); persist(); renderUsers(); }
+    }));
+  }
+  document.getElementById('btnNewUser').addEventListener('click', openAddUser);
+  refresh();
+}
+
+function renderHistory(){
+  viewArea.innerHTML = `
+    <div class="card">
+      <h3>Lịch sử mượn / trả</h3>
+      <div style="margin-top:12px;overflow:auto">
+        <table><thead><tr><th>#</th><th>Người</th><th>Sách</th><th>Loại</th><th>Ngày</th></tr></thead><tbody>${App.history.slice().reverse().map((h,i)=>`<tr><td>${i+1}</td><td>${h.userName}</td><td>${h.bookTitle}</td><td>${h.type}</td><td>${fmtDate(h.date)}</td></tr>`).join('')}</tbody></table>
+      </div>
+    </div>
+  `;
+}
+
+function renderProfile(){
+  viewArea.innerHTML = `
+    <div class="card">
+      <h3>Thông tin tài khoản</h3>
+      <div style="margin-top:12px">${App.current? `<p><strong>${App.current.name}</strong> — ${App.current.email}</p><p>Role: ${App.current.role||'user'}</p>` : '<p>Chưa đăng nhập.</p>'}</div>
+    </div>
+  `;
+}
+
+function renderAuth(){
+  viewArea.innerHTML = `
+    <div class="card" style="max-width:720px">
+      <h3>Đăng nhập / Đăng ký</h3>
+      <div style="display:flex;gap:12px;margin-top:12px">
+        <div style="flex:1">
+          <h4>Đăng nhập</h4>
+          <input id="loginEmail" placeholder="Email" style="width:100%"><br>
+          <input id="loginPass" placeholder="Mật khẩu" type="password" style="width:100%;margin-top:8px"><br>
+          <div style="margin-top:8px"><button class="btn primary" id="doLogin">Đăng nhập</button></div>
+        </div>
+        <div style="flex:1">
+          <h4>Đăng ký</h4>
+          <input id="regName" placeholder="Tên" style="width:100%"><br>
+          <input id="regEmail" placeholder="Email" style="width:100%;margin-top:8px"><br>
+          <input id="regPass" placeholder="Mật khẩu" type="password" style="width:100%;margin-top:8px"><br>
+          <div style="margin-top:8px"><button class="btn" id="doReg">Đăng ký</button></div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('doLogin').addEventListener('click', ()=>{
+    const email = document.getElementById('loginEmail').value.trim();
+    const pass = document.getElementById('loginPass').value;
+    const user = App.users.find(u=>u.email===email && u.password===pass);
+    if(user){ App.current = {id:user.id,name:user.name,email:user.email,role:user.role}; save(LS.current,App.current); persist(); alert('Đăng nhập thành công'); setView('dashboard'); }
+    else alert('Thông tin đăng nhập không đúng');
+  });
+  document.getElementById('doReg').addEventListener('click', ()=>{
+    const name = document.getElementById('regName').value.trim();
+    const email = document.getElementById('regEmail').value.trim();
+    const pass = document.getElementById('regPass').value;
+    if(!name||!email||!pass) return alert('Điền đầy đủ thông tin');
+    if(App.users.some(u=>u.email===email)) return alert('Email đã tồn tại');
+    const id = uid(App.users);
+    App.users.push({id,name,email,password:pass,role:'user',borrowed:[]});
+    persist(); alert('Đăng ký thành công, bạn có thể đăng nhập'); render();
+  });
+}
+
+/* ---------- Book CRUD modals ---------- */
+function openAddBook(){
+  openModal(`<h3>Thêm sách mới</h3>
+    <div style="display:grid;gap:8px">
+      <input id="nb_title" placeholder="Tiêu đề">
+      <input id="nb_author" placeholder="Tác giả">
+      <input id="nb_isbn" placeholder="ISBN">
+      <input id="nb_total" type="number" placeholder="Số lượng" value="1">
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn primary" id="saveNew">Lưu</button><button class="btn ghost" id="cancelNew">Hủy</button></div>
+    </div>
+  `);
+  document.getElementById('cancelNew').addEventListener('click', closeModal);
+  document.getElementById('saveNew').addEventListener('click', ()=>{
+    const title = document.getElementById('nb_title').value.trim();
+    const author = document.getElementById('nb_author').value.trim();
+    const isbn = document.getElementById('nb_isbn').value.trim();
+    const total = parseInt(document.getElementById('nb_total').value) || 1;
+    if(!title||!author) return alert('Điền tiêu đề và tác giả');
+    const id = uid(App.books);
+    App.books.push({id,title,author,isbn,total,available:total});
+    persist(); closeModal(); renderBooks();
+  });
+}
+
+function openEditBook(id){
+  const b = App.books.find(x=>x.id===id); if(!b) return;
+  openModal(`<h3>Sửa sách</h3>
+    <div style="display:grid;gap:8px">
+      <input id="eb_title" value="${escapeHtml(b.title)}">
+      <input id="eb_author" value="${escapeHtml(b.author)}">
+      <input id="eb_isbn" value="${escapeHtml(b.isbn)}">
+      <input id="eb_total" type="number" value="${b.total}">
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn primary" id="saveEdit">Lưu</button><button class="btn ghost" id="cancelEdit">Hủy</button></div>
+    </div>
+  `);
+  document.getElementById('cancelEdit').addEventListener('click', closeModal);
+  document.getElementById('saveEdit').addEventListener('click', ()=>{
+    const newTitle = document.getElementById('eb_title').value.trim();
+    const newAuthor = document.getElementById('eb_author').value.trim();
+    const newIsbn = document.getElementById('eb_isbn').value.trim();
+    const newTotal = parseInt(document.getElementById('eb_total').value) || b.total;
+    if(!newTitle||!newAuthor) return alert('Tiêu đề và tác giả không được để trống');
+    // adjust available: diff added to available (but cannot exceed newTotal or fall below 0)
+    const diff = newTotal - b.total;
+    b.title = newTitle; b.author = newAuthor; b.isbn = newIsbn;
+    b.total = newTotal;
+    b.available = Math.max(0, Math.min(newTotal, b.available + diff));
+    persist(); closeModal(); renderBooks();
+  });
+}
+
+/* ---------- User CRUD modals ---------- */
+function openAddUser(){
+  openModal(`<h3>Tạo người dùng</h3>
+    <div style="display:grid;gap:8px">
+      <input id="nu_name" placeholder="Tên">
+      <input id="nu_email" placeholder="Email">
+      <input id="nu_pass" type="password" placeholder="Mật khẩu">
+      <select id="nu_role"><option value="user">user</option><option value="admin">admin</option></select>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn primary" id="saveUser">Lưu</button><button class="btn ghost" id="cancelUser">Hủy</button></div>
+    </div>
+  `);
+  document.getElementById('cancelUser').addEventListener('click', closeModal);
+  document.getElementById('saveUser').addEventListener('click', ()=>{
+    const name = document.getElementById('nu_name').value.trim();
+    const email = document.getElementById('nu_email').value.trim();
+    const pass = document.getElementById('nu_pass').value;
+    const role = document.getElementById('nu_role').value;
+    if(!name||!email||!pass) return alert('Điền đầy đủ');
+    if(App.users.some(u=>u.email===email)) return alert('Email đã tồn tại');
+    App.users.push({id:uid(App.users),name,email,password:pass,role,borrowed:[]});
+    persist(); closeModal(); renderUsers();
+  });
+}
+
+function openEditUser(id){
+  const u = App.users.find(x=>x.id===id); if(!u) return;
+  openModal(`<h3>Sửa người dùng</h3>
+    <div style="display:grid;gap:8px">
+      <input id="eu_name" value="${escapeHtml(u.name)}">
+      <input id="eu_email" value="${escapeHtml(u.email)}">
+      <select id="eu_role"><option value="user">user</option><option value="admin">admin</option></select>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn primary" id="saveEditUser">Lưu</button><button class="btn ghost" id="cancelEditUser">Hủy</button></div>
+    </div>
+  `);
+  document.getElementById('eu_role').value = u.role||'user';
+  document.getElementById('cancelEditUser').addEventListener('click', closeModal);
+  document.getElementById('saveEditUser').addEventListener('click', ()=>{
+    u.name = document.getElementById('eu_name').value.trim();
+    u.email = document.getElementById('eu_email').value.trim();
+    u.role = document.getElementById('eu_role').value;
+    persist(); closeModal(); renderUsers();
+  });
+}
+
+/* ---------- Borrow / Return logic ---------- */
+function borrowBook(userId, bookId){
+  const user = App.users.find(u=>u.id===userId); const book = App.books.find(b=>b.id===bookId);
+  if(!user || !book) return alert('Người dùng hoặc sách không tồn tại');
+  if(book.available <= 0) return alert('Sách hiện đã hết, không thể mượn');
+  // allow multiple borrow of same book by same user
+  book.available -= 1;
+  user.borrowed.push({bookId:book.id,date:new Date().toISOString()});
+  App.history.push({id:uid(App.history),userId:user.id,userName:user.name,bookId:book.id,bookTitle:book.title,type:'borrow',date:new Date().toISOString()});
+  persist(); alert('Mượn thành công'); render();
+}
+
+function returnBook(userId, bookId){
+  const user = App.users.find(u=>u.id===userId); const book = App.books.find(b=>b.id===bookId);
+  if(!user || !book) return alert('Người dùng hoặc sách không tồn tại');
+  // find one borrowed instance
+  const idx = user.borrowed.findIndex(x=>x.bookId===bookId);
+  if(idx === -1) return alert('Người dùng này không mượn cuốn sách này');
+  user.borrowed.splice(idx,1);
+  book.available = Math.min(book.total, book.available + 1);
+  App.history.push({id:uid(App.history),userId:user.id,userName:user.name,bookId:book.id,bookTitle:book.title,type:'return',date:new Date().toISOString()});
+  persist(); alert('Trả sách thành công'); render();
+}
+
+/* ---------- Helpers ---------- */
+function escapeHtml(str){ return (''+str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
+
+/* ---------- Auth view actions (rendered after) ---------- */
+function attachAuthActions(){
+  // Login & register handled in renderAuth when shown
+}
+
+/* ---------- Initial render ---------- */
+render();
+
+/* ---------- Expose some functions for debugging if needed ---------- */
+window._LM = {App, render, borrowBook, returnBook, openAddBook};
+
+</script>
+</body>
+</html>
